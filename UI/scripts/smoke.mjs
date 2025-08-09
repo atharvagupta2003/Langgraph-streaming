@@ -9,22 +9,22 @@ import {
 } from '../src/langgraphClient.ts';
 
 async function smokeTest() {
-  const LG_API_URL = process.env.LG_API_URL || 'http://localhost:2024';
-  const LG_GRAPH_ID = process.env.LG_GRAPH_ID || 'agent';
+  const NEXT_PUBLIC_LANGGRAPH_URL = process.env.NEXT_PUBLIC_LANGGRAPH_URL || 'http://localhost:2024';
+  const NEXT_PUBLIC_GRAPH_ID = process.env.NEXT_PUBLIC_GRAPH_ID || 'agent';
   const LG_API_KEY = process.env.LG_API_KEY;
 
   console.log('🚀 Starting LangGraph SDK smoke test...');
-  console.log(`📡 API URL: ${LG_API_URL}`);
-  console.log(`🤖 Graph ID: ${LG_GRAPH_ID}`);
+  console.log(`📡 API URL: ${NEXT_PUBLIC_LANGGRAPH_URL}`);
+  console.log(`🤖 Graph ID: ${NEXT_PUBLIC_GRAPH_ID}`);
 
   try {
     // 1. Create client
     console.log('\n📦 Creating client...');
-    const client = makeClient({ apiUrl: LG_API_URL, apiKey: LG_API_KEY });
+    const client = makeClient({ apiUrl: NEXT_PUBLIC_LANGGRAPH_URL, apiKey: LG_API_KEY });
 
     // 2. Create assistant for testing
     console.log('🔍 Creating assistant for graph...');
-    const assistantId = await createAssistant(client, { graphId: LG_GRAPH_ID });
+    const assistantId = await createAssistant(client, { graphId: NEXT_PUBLIC_GRAPH_ID });
     console.log(`✅ Assistant created: ${assistantId}`);
 
     // 3. Create thread
@@ -39,7 +39,7 @@ async function smokeTest() {
     };
 
     console.log('📡 Starting stream...');
-    for await (const part of streamRunWithGraph(client, { threadId, graphId: LG_GRAPH_ID, input, streamMode: "messages" })) {
+    for await (const part of streamRunWithGraph(client, { threadId, graphId: NEXT_PUBLIC_GRAPH_ID, input, streamMode: "messages" })) {
       if (part.event === "metadata") console.log("📄 meta:", part.data);
       if (part.event === "messages") console.log("💬 msg:", JSON.stringify(part.data));
       if (part.event === "updates") console.log("🔄 upd:", JSON.stringify(part.data));
@@ -53,7 +53,7 @@ async function smokeTest() {
     };
 
     console.log('📡 Starting tool call stream...');
-    for await (const part of streamRunWithGraph(client, { threadId, graphId: LG_GRAPH_ID, input: toolInput, streamMode: "messages" })) {
+    for await (const part of streamRunWithGraph(client, { threadId, graphId: NEXT_PUBLIC_GRAPH_ID, input: toolInput, streamMode: "messages" })) {
       if (part.event === "updates") {
         console.log("🔄 Tool update:", JSON.stringify(part.data));
         

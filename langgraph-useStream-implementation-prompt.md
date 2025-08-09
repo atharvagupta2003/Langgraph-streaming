@@ -6,7 +6,7 @@ Phase 1 — LangGraph SDK helpers & manual streaming test (no UI)
 ----------------------------------------
 
 Inputs (Environment)
-LG_API_URL=http://localhost:2024        # LangGraph Server URL
+NEXT_PUBLIC_LANGGRAPH_URL=http://localhost:2024        # LangGraph Server URL
 LG_ASSISTANT_ID=<YOUR_ASSISTANT_ID>     # Deployed assistant ID
 # If your server requires auth, you’ll receive LG_API_KEY later. Do not hardcode secrets.
 agent is already running on local host 2024
@@ -25,7 +25,7 @@ Build these helper functions (src/langgraphClient.ts)
 Use the official JS SDK. Keep everything agent-agnostic (forward input as-is).
 
 1) makeClient(config)
-   - new Client({ apiUrl: LG_API_URL, apiKey?: LG_API_KEY })
+   - new Client({ apiUrl: NEXT_PUBLIC_LANGGRAPH_URL, apiKey?: LG_API_KEY })
 
 2) assertAssistantExists(client, assistantId)
    - client.assistants.search({ limit: 50 }) → throw if not found.
@@ -57,7 +57,7 @@ Tip on stream modes
 - "messages-tuple" is useful for token-level deltas if you ever need raw tokens.
 
 Minimal manual test (scripts/smoke.mjs)
-1. Build client with LG_API_URL (and LG_API_KEY if provided).
+1. Build client with NEXT_PUBLIC_LANGGRAPH_URL (and LG_API_KEY if provided).
 2. assertAssistantExists(LG_ASSISTANT_ID).
 3. createThread() → threadId.
 4. Start a run with:

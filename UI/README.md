@@ -27,7 +27,7 @@ cp .env.example .env.local
 
 3. Test the SDK helpers:
 ```bash
-LG_API_URL=http://localhost:2024 LG_GRAPH_ID=agent node scripts/smoke.mjs
+NEXT_PUBLIC_LANGGRAPH_URL=http://localhost:2024 NEXT_PUBLIC_GRAPH_ID=agent node scripts/smoke.mjs
 ```
 
 ### Phase 2: UI Development
@@ -78,8 +78,8 @@ NEXT_PUBLIC_GRAPH_ID=agent
 
 ### Testing (for smoke.mjs)
 ```
-LG_API_URL=http://localhost:2024
-LG_GRAPH_ID=agent
+NEXT_PUBLIC_LANGGRAPH_URL=http://localhost:2024
+NEXT_PUBLIC_GRAPH_ID=agent
 LG_API_KEY=your-api-key-if-needed
 ```
 
