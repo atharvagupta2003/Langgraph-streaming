@@ -5,9 +5,11 @@ import clsx from "clsx";
 interface MessageBubbleProps {
   message: Message;
   streaming?: boolean;
+  // Optional map of tool results by tool_call_id for combined rendering
+  toolResultsById?: Record<string, Message | undefined>;
 }
 
-export default function MessageBubble({ message, streaming }: MessageBubbleProps) {
+export default function MessageBubble({ message, streaming, toolResultsById }: MessageBubbleProps) {
   const { type, content, tool_calls, name, tool_call_id } = message;
   const contentHasText = typeof content === 'string' && content.trim().length > 0;
   const hasToolCalls = Array.isArray(tool_calls) && tool_calls.length > 0;
@@ -58,19 +60,24 @@ export default function MessageBubble({ message, streaming }: MessageBubbleProps
           </div>
         )}
         
-        {/* Display tool calls as separate cards below the message */}
+        {/* Display tool calls as combined cards with results below the message */}
         {tool_calls && tool_calls.length > 0 && (
           <div className="mt-2 space-y-2">
-            {tool_calls.map((toolCall, index) => (
-              <ToolCallCard
-                key={toolCall.id || index}
-                kind="call"
-                name={toolCall.name}
-                args={toolCall.args}
-                toolCallId={toolCall.id}
-                when={Date.now()}
-              />
-            ))}
+            {tool_calls.map((toolCall, index) => {
+              const resultMsg = toolResultsById?.[toolCall.id];
+              return (
+                <ToolCallCard
+                  key={toolCall.id || index}
+                  kind="combined"
+                  name={toolCall.name}
+                  args={toolCall.args}
+                  result={resultMsg?.content}
+                  toolCallId={toolCall.id}
+                  when={Date.now()}
+                  loading={!resultMsg}
+                />
+              );
+            })}
           </div>
         )}
       </div>

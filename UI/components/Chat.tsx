@@ -68,6 +68,13 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
   // Removed auto-create to avoid races with hydration.
 
   const messages = multiChat.activeChat?.messages || [];
+  // Build a map of tool results by tool_call_id for combined rendering
+  const toolResultsById = messages.reduce<Record<string, any>>((acc, m) => {
+    if (m.type === 'tool' && m.tool_call_id) acc[m.tool_call_id] = m;
+    return acc;
+  }, {});
+  // Hide standalone tool messages; they are shown combined under the AI tool call
+  const renderMessages = messages.filter((m) => m.type !== 'tool');
 
   return (
     <div className="h-screen flex">
@@ -143,14 +150,15 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
             </div>
           ) : (
             <div className="space-y-4">
-              {messages.map((message, index) => {
+              {renderMessages.map((message, index) => {
                 const anyMessage = message as any;
                 const stableKey = anyMessage.id || message.tool_call_id || `${message.type}-${index}`;
                 return (
                   <MessageBubble
                     key={stableKey}
                     message={message}
-                    streaming={multiChat.isLoading && message.type === 'ai' && index === messages.length - 1}
+                    streaming={multiChat.isLoading && message.type === 'ai' && index === renderMessages.length - 1}
+                    toolResultsById={toolResultsById}
                   />
                 );
               })}
