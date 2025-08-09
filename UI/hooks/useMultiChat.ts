@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Message, ThreadMetadata } from '@/lib/types';
 import type { Config } from '@langchain/langgraph-sdk';
-import { makeClient } from '@/src/langgraphClient';
+import { makeClient, getThreadHistory, getThreadState } from '@/src/langgraphClient';
 
 interface ChatSession {
   id: string;
@@ -97,10 +97,80 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    
     setActiveChatId(chatId);
     console.log('Switched to chat:', chatId);
   }, []);
+  // Persist chats to localStorage (lightweight) so sidebar survives refresh
+  const persistChats = useCallback((nextChats: ChatSession[]) => {
+    try {
+      const minimal = nextChats.map(c => ({
+        id: c.id,
+        title: c.title,
+        createdAt: c.createdAt,
+        isLoading: false,
+        threadId: c.thread?.thread_id || null,
+        assistantId: c.assistant?.assistant_id || null,
+        metadata: c.metadata,
+      }));
+      localStorage.setItem('lg_chats_v1', JSON.stringify(minimal));
+    } catch {}
+  }, []);
+
+  // On mount, hydrate chats list from localStorage
+  // We don’t restore messages here; we restore per chat selection via history
+  // to avoid loading all threads upfront
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('lg_chats_v1');
+      if (raw) {
+        const minimal = JSON.parse(raw) as Array<any>;
+        const restored: ChatSession[] = minimal.map((m) => ({
+          id: m.id,
+          title: m.title || 'New Chat',
+          messages: [],
+          assistant: m.assistantId ? { assistant_id: m.assistantId } : null,
+          thread: m.threadId ? { thread_id: m.threadId } : null,
+          metadata: m.metadata || {},
+          createdAt: m.createdAt || Date.now(),
+          isLoading: false,
+          error: null,
+          toolCallMessageIndex: null,
+          streamingMessageIndex: null,
+          toolsCompleted: false,
+          seenToolResults: new Set<string>()
+        }));
+        if (restored.length > 0) {
+          setChats(restored);
+          setActiveChatId(restored[0].id);
+        }
+      }
+    } catch {}
+  }, []);
+
+  // Persist anytime chats change (IDs/titles/threads)
+  useEffect(() => {
+    persistChats(chats);
+  }, [chats, persistChats]);
+
+  // Helper to restore messages for a chat by fetching thread history
+  const restoreChatMessages = useCallback(async (chat: ChatSession) => {
+    if (!chat.thread?.thread_id) return chat;
+    try {
+      const client = clientRef.current;
+      const latest = await getThreadState(client, chat.thread.thread_id);
+      // Extract just the latest messages from thread state
+      const values = (latest as any)?.values;
+      const messages = values && (Array.isArray(values) ? values : values.messages);
+      const restoredMessages: Message[] = Array.isArray(messages)
+        ? messages.filter((m: any) => m && (m.type === 'human' || m.type === 'ai' || m.type === 'tool'))
+        : [];
+      return { ...chat, messages: restoredMessages } as ChatSession;
+    } catch (e) {
+      console.warn('Failed to restore history for chat', chat.id, e);
+      return chat;
+    }
+  }, []);
+
   
   const deleteChat = useCallback(async (chatId: string) => {
     const client = clientRef.current;
@@ -138,6 +208,7 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
   
   const sendMessage = useCallback(async (message: Message) => {
     if (!activeChatId) return;
+    const targetChatId = activeChatId;
     
     const client = clientRef.current;
     
@@ -161,7 +232,7 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
     
     // Set loading state and reset streaming bookkeeping for a fresh run
     setChats(prev => prev.map(chat => 
-      chat.id === activeChatId 
+      chat.id === targetChatId 
         ? { 
             ...chat, 
             isLoading: true, 
@@ -175,11 +246,11 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
     ));
     
     try {
-      let currentChat = chats.find(c => c.id === activeChatId);
+      let currentChat = chats.find(c => c.id === targetChatId);
       
       // Initialize assistant and thread if not exists
       if (!currentChat?.assistant || !currentChat?.thread) {
-        console.log('Initializing assistant and thread for chat:', activeChatId);
+        console.log('Initializing assistant and thread for chat:', targetChatId);
         
         const assistant = await client.assistants.create({
           graphId,
@@ -190,7 +261,7 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
         const thread = await client.threads.create();
         
         setChats(prev => prev.map(chat => 
-          chat.id === activeChatId 
+          chat.id === targetChatId 
             ? { 
                 ...chat, 
                 assistant, 
@@ -217,7 +288,7 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
         thread_id: currentChat.thread.thread_id,
         run_id: undefined
       };
-      onMetadataEvent?.(activeChatId, metadata);
+      onMetadataEvent?.(targetChatId, metadata);
       
       // Start streaming
       abortControllerRef.current = new AbortController();
@@ -241,14 +312,14 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
         
         if (part.event === 'metadata' && part.data) {
           const updatedMetadata = { ...metadata, run_id: part.data.run_id };
-          onMetadataEvent?.(activeChatId, updatedMetadata);
+          onMetadataEvent?.(targetChatId, updatedMetadata);
         }
         
         if ((part.event === 'messages' || part.event === 'messages/partial' || part.event === 'messages/complete') && Array.isArray(part.data)) {
           for (const streamMessage of part.data) {
             if (streamMessage.type === 'ai' || streamMessage.type === 'tool') {
               setChats(prev => prev.map(chat => {
-                if (chat.id !== activeChatId) return chat;
+                if (chat.id !== targetChatId) return chat;
                 
                 const updatedMessages = [...chat.messages];
                 const incomingId = (streamMessage as any).id as string | undefined;
@@ -337,13 +408,28 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
       onError?.(activeChatId, error);
     } finally {
       setChats(prev => prev.map(chat => 
-        chat.id === activeChatId 
+        chat.id === targetChatId 
           ? { ...chat, isLoading: false }
           : chat
       ));
       abortControllerRef.current = null;
     }
   }, [activeChatId, chats, apiUrl, graphId, config, onMetadataEvent, onError]);
+
+  // When active chat changes, attempt to lazily restore its messages from server
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const current = chats.find(c => c.id === activeChatId);
+      if (current && current.messages.length === 0 && current.thread?.thread_id) {
+        const restored = await restoreChatMessages(current);
+        if (!cancelled) {
+          setChats(prev => prev.map(c => c.id === restored.id ? restored : c));
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeChatId, chats, restoreChatMessages]);
   
   const stopCurrentStream = useCallback(() => {
     if (abortControllerRef.current) {

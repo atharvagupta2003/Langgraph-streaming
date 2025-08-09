@@ -61,6 +61,13 @@ export async function getThreadHistory(client: Client, threadId: string) {
   return await client.threads.getHistory(threadId);
 }
 
+export async function getThreadState(client: Client, threadId: string) {
+  // Returns the latest thread state (values, next, checkpoint, ...)
+  // Shape corresponds to ThreadState in the platform OpenAPI spec
+  // Used to restore messages after page refresh
+  return await client.threads.getState(threadId);
+}
+
 export async function* streamRunWithGraph(client: Client, options: StreamRunOptions) {
   const {
     threadId,

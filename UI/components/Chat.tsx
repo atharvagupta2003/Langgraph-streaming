@@ -65,12 +65,7 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [multiChat.activeChat?.messages, multiChat.isLoading]);
 
-  useEffect(() => {
-    // Create initial chat if no chats exist
-    if (multiChat.chats.length === 0) {
-      multiChat.createNewChat();
-    }
-  }, []);
+  // Removed auto-create to avoid races with hydration.
 
   const messages = multiChat.activeChat?.messages || [];
 
