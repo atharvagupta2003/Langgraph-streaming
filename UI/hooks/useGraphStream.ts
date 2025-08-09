@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { makeClient } from '@/src/langgraphClient';
 import { Message, ThreadMetadata } from '@/lib/types';
 import type { Config } from '@langchain/langgraph-sdk';
@@ -18,6 +18,7 @@ interface UseGraphStreamReturn {
   isLoading: boolean;
   submit: (input: { messages: Message[] }) => void;
   stop: () => void;
+  endConversation: () => Promise<void>;
   error: Error | null;
 }
 
@@ -32,6 +33,15 @@ export function useGraphStream(options: UseGraphStreamOptions): UseGraphStreamRe
 
   const [messages, setMessages] = useState<Message[]>([]);
   const seenToolResults = useRef<Set<string>>(new Set());
+  const conversationContext = useRef<{
+    assistant: any;
+    thread: any;
+    isInitialized: boolean;
+  }>({
+    assistant: null,
+    thread: null,
+    isInitialized: false
+  });
   const currentConversationState = useRef<{
     toolCallMessage: Message | null;
     toolCallMessageIndex: number | null;
@@ -192,6 +202,30 @@ export function useGraphStream(options: UseGraphStreamOptions): UseGraphStreamRe
     setIsLoading(false);
   }, []);
 
+  const endConversation = useCallback(async () => {
+    const client = clientRef.current;
+    const context = conversationContext.current;
+    
+    if (context.isInitialized) {
+      try {
+        console.log('Ending conversation and cleaning up...');
+        await client.assistants.delete(context.assistant.assistant_id);
+        await client.threads.delete(context.thread.thread_id);
+        
+        // Reset context
+        conversationContext.current = {
+          assistant: null,
+          thread: null,
+          isInitialized: false
+        };
+        
+        console.log('Conversation ended and cleaned up');
+      } catch (cleanupError) {
+        console.warn('Cleanup error:', cleanupError);
+      }
+    }
+  }, []);
+
   const submit = useCallback(async (
     input: { messages: Message[] }
   ) => {
@@ -203,8 +237,7 @@ export function useGraphStream(options: UseGraphStreamOptions): UseGraphStreamRe
     setIsLoading(true);
     abortControllerRef.current = new AbortController();
     
-    // Reset conversation state for new conversation
-    seenToolResults.current.clear();
+    // Reset conversation state for new message
     currentConversationState.current = {
       toolCallMessage: null,
       toolCallMessageIndex: null,
@@ -221,15 +254,28 @@ export function useGraphStream(options: UseGraphStreamOptions): UseGraphStreamRe
     try {
       const client = clientRef.current;
       
-      // Create assistant for this run
-      const assistant = await client.assistants.create({
-        graphId: graphId,
-        config: config || { configurable: {} },
-        ifExists: "raise"
-      });
+      // Initialize assistant and thread if not already done
+      if (!conversationContext.current.isInitialized) {
+        console.log('Initializing new conversation context...');
+        
+        // Create assistant for this conversation
+        conversationContext.current.assistant = await client.assistants.create({
+          graphId: graphId,
+          config: config || { configurable: {} },
+          ifExists: "raise"
+        });
 
-      // Create thread
-      const thread = await client.threads.create();
+        // Create thread for this conversation
+        conversationContext.current.thread = await client.threads.create();
+        conversationContext.current.isInitialized = true;
+        
+        console.log('Created assistant:', conversationContext.current.assistant.assistant_id);
+        console.log('Created thread:', conversationContext.current.thread.thread_id);
+      } else {
+        console.log('Reusing existing conversation context');
+      }
+
+      const { assistant, thread } = conversationContext.current;
       
       // Emit metadata
       const metadata: ThreadMetadata = {
@@ -238,12 +284,12 @@ export function useGraphStream(options: UseGraphStreamOptions): UseGraphStreamRe
       };
       onMetadataEvent?.(metadata);
 
-      // Start streaming run
+      // Start streaming run with the latest user message only
       const stream = client.runs.stream(
         thread.thread_id, 
         assistant.assistant_id,
         {
-          input,
+          input: { messages: userMessages }, // Only send the new user message
           streamMode: ["messages", "updates"],
           config
         }
@@ -294,13 +340,8 @@ export function useGraphStream(options: UseGraphStreamOptions): UseGraphStreamRe
         toolsCompleted: false
       };
 
-      // Cleanup: delete assistant and thread
-      try {
-        await client.assistants.delete(assistant.assistant_id);
-        await client.threads.delete(thread.thread_id);
-      } catch (cleanupError) {
-        console.warn('Cleanup error:', cleanupError);
-      }
+      // Keep assistant and thread alive for continued conversation
+      console.log('Keeping conversation context alive for next message');
 
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Stream failed');
@@ -312,11 +353,19 @@ export function useGraphStream(options: UseGraphStreamOptions): UseGraphStreamRe
     }
   }, [apiUrl, graphId, config, isLoading, onMetadataEvent, onError, stop]);
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      endConversation();
+    };
+  }, [endConversation]);
+
   return {
     messages,
     isLoading,
     submit,
     stop,
+    endConversation,
     error
   };
 }
