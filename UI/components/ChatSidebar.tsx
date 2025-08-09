@@ -47,20 +47,23 @@ export default function ChatSidebar({
   };
 
   return (
-    <div className={clsx(
-      "bg-gray-50 border-r border-gray-200 flex flex-col transition-all duration-300",
-      isCollapsed ? "w-16" : "w-80"
-    )}>
+    <div
+      className={clsx(
+        // Bluish liquid glass side rail
+        "backdrop-blur-md bg-blue-200/25 border-r border-white/20 shadow-[inset_-1px_0_0_rgba(255,255,255,.2)] flex flex-col transition-all duration-300",
+        isCollapsed ? "w-14" : "w-80"
+      )}
+    >
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-gray-200">
+      <div className={clsx("flex items-center p-4 border-b border-white/30", isCollapsed ? "justify-start pl-3" : "justify-between")}>
         {!isCollapsed && (
           <h2 className="text-lg font-semibold text-gray-900">Chats</h2>
         )}
-        <div className="flex gap-2">
+        <div className={clsx("flex gap-2", isCollapsed && "flex-col gap-2 items-start")}> 
           {onToggleCollapse && (
             <button
               onClick={onToggleCollapse}
-              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              className="p-2 text-gray-700 hover:text-gray-900 hover:bg-white/60 rounded-lg transition-colors"
               title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             >
               {isCollapsed ? (
@@ -76,8 +79,9 @@ export default function ChatSidebar({
           )}
           <button
             onClick={onNewChat}
-            className="p-2 bg-blue-500 text-white hover:bg-blue-600 rounded-lg transition-colors"
+            className="p-2 rounded-full bg-blue-600 text-white hover:bg-blue-700 shadow transition-colors"
             title="New chat"
+            aria-label="New chat"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -87,9 +91,9 @@ export default function ChatSidebar({
       </div>
 
       {/* Chat List */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto no-scrollbar">
         {chats.length === 0 ? (
-          <div className="p-4 text-center text-gray-500">
+          <div className="p-4 text-center text-gray-700">
             {isCollapsed ? (
               <div className="text-xs">No chats</div>
             ) : (
@@ -105,10 +109,10 @@ export default function ChatSidebar({
               <div
                 key={chat.id}
                 className={clsx(
-                  "relative group p-3 rounded-lg cursor-pointer transition-all mb-2",
+                  "relative group p-3 rounded-xl cursor-pointer transition-all mb-2",
                   activeChatId === chat.id
-                    ? "bg-blue-100 border border-blue-200"
-                    : "hover:bg-gray-100 border border-transparent",
+                    ? "bg-white/80 border border-white/70 shadow backdrop-blur"
+                    : "hover:bg-white/60 border border-transparent backdrop-blur",
                   isCollapsed && "p-2"
                 )}
                 onClick={() => onChatSelect(chat.id)}
@@ -122,14 +126,14 @@ export default function ChatSidebar({
                         {chat.title}
                       </h3>
                       {chat.isLoading && (
-                        <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                        <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
                       )}
                     </div>
                     <div className="flex items-center justify-between mt-1">
-                      <p className="text-xs text-gray-500">
+                      <p className="text-xs text-gray-700">
                         {chat.messages.length} messages
                       </p>
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-gray-600">
                         {formatTime(chat.createdAt)}
                       </p>
                     </div>
@@ -139,10 +143,10 @@ export default function ChatSidebar({
                     <div className="flex flex-col items-center">
                       <div className={clsx(
                         "w-3 h-3 rounded-full mb-1",
-                        activeChatId === chat.id ? "bg-blue-500" : "bg-gray-400"
+                        activeChatId === chat.id ? "bg-blue-600" : "bg-gray-400"
                       )}></div>
                       {chat.isLoading && (
-                        <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                        <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
                       )}
                     </div>
                   )}
@@ -154,7 +158,7 @@ export default function ChatSidebar({
                         e.stopPropagation();
                         onDeleteChat(chat.id);
                       }}
-                      className="ml-2 p-1 text-gray-400 hover:text-red-500 rounded transition-colors opacity-0 group-hover:opacity-100"
+                      className="ml-2 p-1 text-gray-600 hover:text-red-600 rounded transition-colors opacity-0 group-hover:opacity-100"
                       title="Delete chat"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -178,7 +182,7 @@ export default function ChatSidebar({
 
       {/* Footer info */}
       {!isCollapsed && (
-        <div className="p-4 border-t border-gray-200 text-xs text-gray-500">
+        <div className="p-4 border-t border-white/30 text-xs text-gray-700">
           <p>Each chat maintains its own conversation context</p>
         </div>
       )}

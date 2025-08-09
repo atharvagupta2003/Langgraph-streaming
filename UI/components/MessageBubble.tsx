@@ -35,22 +35,28 @@ export default function MessageBubble({ message, streaming, toolResultsById }: M
 
   return (
     <div className={clsx(
-      "flex w-full mb-4",
+      "flex w-full mb-4 gap-2",
       type === "human" ? "justify-end" : "justify-start"
     )}>
+      {/* Avatar */}
+      {type !== 'human' && (
+        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center shadow-sm select-none">
+          🤖
+        </div>
+      )}
       <div className={clsx(
-        "max-w-[80%]",
+        "max-w-[82%] sm:max-w-[78%] md:max-w-[70%]",
         type === "human" ? "ml-auto" : "mr-auto"
       )}>
         {/* Main message bubble */}
         {shouldShowMainBubble && (
           <div className={clsx(
-            "px-4 py-3 rounded-2xl shadow-sm leading-relaxed",
+            "px-4 py-3 rounded-2xl leading-relaxed transition-all duration-300",
             type === "human" 
-              ? "bg-blue-500 text-white" 
-              : "bg-gray-100 text-gray-900"
+              ? "bg-gradient-to-br from-blue-600/90 to-blue-500/90 text-white shadow-md ring-1 ring-white/10 hover:shadow-lg" 
+              : "bg-white/40 backdrop-blur-xl border border-white/40 text-gray-900 shadow-md hover:bg-white/50 ring-1 ring-white/20 hover:shadow-lg"
           )}>
-            <div className="whitespace-pre-wrap">
+            <div className="whitespace-pre-wrap break-words">
               {content}
             </div>
             
@@ -81,6 +87,12 @@ export default function MessageBubble({ message, streaming, toolResultsById }: M
           </div>
         )}
       </div>
+      {/* Right-side avatar for human */}
+      {type === 'human' && (
+        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-800 text-white flex items-center justify-center shadow-sm select-none">
+          🙋
+        </div>
+      )}
     </div>
   );
 }

@@ -12,6 +12,7 @@
   "dependencies": {
     "@langchain/core": "^0.2.0",
     "@langchain/langgraph-sdk": "^0.0.20",
+    "lenis": "^1.0.42",
     "next": "14.2.5",
     "react": "^18",
     "react-dom": "^18",
