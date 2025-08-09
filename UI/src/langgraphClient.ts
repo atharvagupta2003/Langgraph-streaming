@@ -139,6 +139,13 @@ export async function cancelRun(client: Client, options: CancelRunOptions): Prom
   await client.runs.cancel(threadId, runId);
 }
 
+// Interrupt a running run and wait for cancellation to complete, preserving checkpoint
+export async function interruptRun(client: Client, threadId: string, runId: string): Promise<void> {
+  // SDK supports extra options for cancel; pass action=interrupt and wait=true
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (client.runs.cancel as any)(threadId, runId, { action: 'interrupt', wait: true });
+}
+
 export async function listRuns(client: Client, options: ListRunsOptions) {
   const { threadId, limit = 20 } = options;
   return await client.runs.list(threadId, { limit });

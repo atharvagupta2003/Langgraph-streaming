@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { Message, ThreadMetadata } from '@/lib/types';
 import type { Config } from '@langchain/langgraph-sdk';
 import { makeClient, getThreadHistory, getThreadState } from '@/src/langgraphClient';
+import { interruptRun } from '@/src/langgraphClient';
 
 interface ChatSession {
   id: string;
@@ -20,6 +21,9 @@ interface ChatSession {
   streamingMessageIndex: number | null;
   toolsCompleted: boolean;
   seenToolResults: Set<string>;
+  currentRunId?: string | null;
+  pausedCheckpoint?: any | null;
+  pendingToolCallIds: Set<string>;
 }
 
 interface UseMultiChatOptions {
@@ -39,6 +43,7 @@ interface UseMultiChatReturn {
   deleteChat: (chatId: string) => void;
   sendMessage: (message: Message) => void;
   stopCurrentStream: () => void;
+  pauseCurrentRun: () => Promise<void>;
   isLoading: boolean;
 }
 
@@ -81,7 +86,8 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
       toolCallMessageIndex: null,
       streamingMessageIndex: null,
       toolsCompleted: false,
-      seenToolResults: new Set<string>()
+      seenToolResults: new Set<string>(),
+      pendingToolCallIds: new Set<string>()
     };
     
     setChats(prev => [newChat, ...prev]);
@@ -137,7 +143,8 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
           toolCallMessageIndex: null,
           streamingMessageIndex: null,
           toolsCompleted: false,
-          seenToolResults: new Set<string>()
+          seenToolResults: new Set<string>(),
+          pendingToolCallIds: new Set<string>()
         }));
         if (restored.length > 0) {
           setChats(restored);
@@ -240,13 +247,16 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
             toolCallMessageIndex: null,
             streamingMessageIndex: null,
             toolsCompleted: false,
-            seenToolResults: new Set<string>()
+            seenToolResults: new Set<string>(),
+            // clear paused checkpoint if any; we'll consume it on this send
+            pausedCheckpoint: null
           }
         : chat
     ));
     
     try {
       let currentChat = chats.find(c => c.id === targetChatId);
+      const resumeCheckpoint = currentChat?.pausedCheckpoint;
       
       // Initialize assistant and thread if not exists
       if (!currentChat?.assistant || !currentChat?.thread) {
@@ -299,7 +309,8 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
         {
           input: { messages: [message] },
           streamMode: ["messages", "updates"],
-          config
+          config,
+          ...(resumeCheckpoint ? { checkpoint: resumeCheckpoint } : {})
         }
       );
       
@@ -313,6 +324,9 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
         if (part.event === 'metadata' && part.data) {
           const updatedMetadata = { ...metadata, run_id: part.data.run_id };
           onMetadataEvent?.(targetChatId, updatedMetadata);
+          setChats(prev => prev.map(chat =>
+            chat.id === targetChatId ? { ...chat, currentRunId: part.data.run_id } : chat
+          ));
         }
         
         if ((part.event === 'messages' || part.event === 'messages/partial' || part.event === 'messages/complete') && Array.isArray(part.data)) {
@@ -334,6 +348,11 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
 
                 if (streamMessage.type === 'ai') {
                   if (streamMessage.tool_calls && streamMessage.tool_calls.length > 0) {
+                    // Track pending tool_call ids for pause guard
+                    const nextPending = new Set(chat.pendingToolCallIds);
+                    for (const tc of streamMessage.tool_calls) {
+                      if (tc?.id) nextPending.add(tc.id);
+                    }
                     // Record or update tool call message index
                     if (chat.toolCallMessageIndex === null) {
                       updatedMessages.push(streamMessage);
@@ -341,6 +360,7 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
                     } else {
                       updatedMessages[chat.toolCallMessageIndex] = streamMessage;
                     }
+                    return { ...chat, messages: updatedMessages, pendingToolCallIds: nextPending };
                   } else {
                     // AI response without tool calls - streaming final response
                     // If tools were called but not completed, do not show streaming yet
@@ -389,6 +409,12 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
 
                   // Mark tools completed
                   chat.toolsCompleted = true;
+                  // Remove from pending tool ids
+                  if (streamMessage.tool_call_id && chat.pendingToolCallIds.has(streamMessage.tool_call_id)) {
+                    const nextPending = new Set(chat.pendingToolCallIds);
+                    nextPending.delete(streamMessage.tool_call_id);
+                    return { ...chat, messages: updatedMessages, pendingToolCallIds: nextPending };
+                  }
                 }
                 
                 return { ...chat, messages: updatedMessages };
@@ -409,7 +435,7 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
     } finally {
       setChats(prev => prev.map(chat => 
         chat.id === targetChatId 
-          ? { ...chat, isLoading: false }
+          ? { ...chat, isLoading: false, currentRunId: null }
           : chat
       ));
       abortControllerRef.current = null;
@@ -440,11 +466,36 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
     if (activeChatId) {
       setChats(prev => prev.map(chat => 
         chat.id === activeChatId 
-          ? { ...chat, isLoading: false }
+          ? { ...chat, isLoading: false, currentRunId: null }
           : chat
       ));
     }
   }, [activeChatId]);
+
+  const pauseCurrentRun = useCallback(async () => {
+    const client = clientRef.current;
+    const chat = chats.find(c => c.id === activeChatId);
+    if (!chat || !chat.thread?.thread_id || !chat.currentRunId) return;
+    // Guard: do not allow pause while tool calls are pending
+    if (chat.pendingToolCallIds && chat.pendingToolCallIds.size > 0) {
+      console.warn('Pause blocked: tool call in progress');
+      return;
+    }
+
+    // Interrupt run and capture latest checkpoint from thread state
+    try {
+      await interruptRun(client, chat.thread.thread_id, chat.currentRunId);
+      const latest = await getThreadState(client, chat.thread.thread_id);
+      setChats(prev => prev.map(c => c.id === chat.id ? { ...c, pausedCheckpoint: (latest as any)?.checkpoint, isLoading: false, currentRunId: null } : c));
+      // Abort any active stream loop
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    } catch (e) {
+      console.warn('Failed to pause run', e);
+    }
+  }, [activeChatId, chats]);
   
   return {
     chats,
@@ -455,6 +506,7 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
     deleteChat,
     sendMessage,
     stopCurrentStream,
+    pauseCurrentRun,
     isLoading: activeChat?.isLoading || false
   };
 }

@@ -60,6 +60,9 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
   const handleStop = () => {
     multiChat.stopCurrentStream();
   };
+  const handlePause = async () => {
+    await multiChat.pauseCurrentRun();
+  };
 
   const handleNewChat = () => {
     multiChat.createNewChat();
@@ -276,27 +279,33 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
                   rows={2}
                   disabled={multiChat.isLoading}
                 />
-                <button
-                  onClick={handleSubmit}
-                  disabled={!input.trim() || multiChat.isLoading}
-                  aria-label={multiChat.isLoading ? 'Loading' : 'Send message'}
-                  className={clsx(
-                    'p-3 rounded-xl transition-colors flex items-center justify-center',
-                    'text-white',
-                    multiChat.isLoading
-                      ? 'bg-blue-600'
-                      : 'bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed'
-                  )}
-                >
-                  {multiChat.isLoading ? (
+                {multiChat.isLoading ? (
+                  <button
+                    onClick={handlePause}
+                    aria-label="Pause run"
+                    className="p-3 rounded-xl transition-colors flex items-center justify-center bg-blue-600 text-white hover:bg-red-600 disabled:bg-gray-400"
+                    title="Pause and save state"
+                    disabled={Boolean(multiChat.activeChat?.toolCallMessageIndex !== null && !multiChat.activeChat?.toolsCompleted)}
+                  >
                     <span className="inline-block w-5 h-5 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
-                  ) : (
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSubmit}
+                    disabled={!input.trim()}
+                    aria-label="Send message"
+                    className={clsx(
+                      'p-3 rounded-xl transition-colors flex items-center justify-center',
+                      'text-white',
+                      'bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed'
+                    )}
+                  >
                     <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M22 2L11 13" />
                       <path d="M22 2l-7 20-4-9-9-4 20-7z" />
                     </svg>
-                  )}
-                </button>
+                  </button>
+                )}
               </div>
             </div>
           </div>
