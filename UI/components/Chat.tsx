@@ -244,6 +244,11 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
                     message={message}
                     streaming={multiChat.isLoading && message.type === 'ai' && index === renderMessages.length - 1}
                     toolResultsById={toolResultsById}
+                    index={index}
+                    onEdit={async (idx, newText) => {
+                      if (!newText) return;
+                      await multiChat.editAndForkMessage(idx, newText);
+                    }}
                   />
                 );
               })}

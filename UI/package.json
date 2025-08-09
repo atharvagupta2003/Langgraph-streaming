@@ -12,11 +12,13 @@
   "dependencies": {
     "@langchain/core": "^0.2.0",
     "@langchain/langgraph-sdk": "^0.0.20",
+    "clsx": "^2.1.1",
     "lenis": "^1.0.42",
     "next": "14.2.5",
     "react": "^18",
     "react-dom": "^18",
-    "clsx": "^2.1.1"
+    "react-markdown": "^9.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^20",

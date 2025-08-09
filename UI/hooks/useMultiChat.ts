@@ -45,6 +45,7 @@ interface UseMultiChatReturn {
   stopCurrentStream: () => void;
   pauseCurrentRun: () => Promise<void>;
   isLoading: boolean;
+  editAndForkMessage: (messageIndex: number, newContent: string) => Promise<void>;
 }
 
 export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
@@ -341,8 +342,32 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
                 if (incomingId) {
                   const existingByIdIndex = updatedMessages.findIndex((m: any) => (m as any).id === incomingId);
                   if (existingByIdIndex >= 0) {
-                    updatedMessages[existingByIdIndex] = streamMessage;
-                    return { ...chat, messages: updatedMessages };
+                    const existingMsg = updatedMessages[existingByIdIndex] as any;
+                    const incomingHasTools = (streamMessage as any).tool_calls && (streamMessage as any).tool_calls.length > 0;
+                    const existingHasTools = existingMsg && existingMsg.type === 'ai' && existingMsg.tool_calls && existingMsg.tool_calls.length > 0;
+                    // Do not overwrite an AI tool-call message with a final AI message without tool_calls.
+                    // Keep the original AI tool-call message so ToolCallCards remain visible.
+                    if (existingHasTools && !incomingHasTools && (streamMessage as any).type === 'ai') {
+                      // Insert the final AI message after tool results instead of replacing tool-call message
+                      let insertIndex = updatedMessages.length;
+                      for (let i = updatedMessages.length - 1; i >= 0; i--) {
+                        const msg = updatedMessages[i] as any;
+                        if (msg.type === 'ai' && !msg.tool_calls) {
+                          insertIndex = i;
+                        } else if (msg.type === 'ai' && msg.tool_calls) {
+                          break;
+                        }
+                      }
+                      updatedMessages.splice(insertIndex, 0, streamMessage);
+                      // Adjust streaming index if needed
+                      if (chat.streamingMessageIndex !== null && chat.streamingMessageIndex >= insertIndex) {
+                        chat.streamingMessageIndex += 1;
+                      }
+                      return { ...chat, messages: updatedMessages };
+                    } else {
+                      updatedMessages[existingByIdIndex] = streamMessage;
+                      return { ...chat, messages: updatedMessages };
+                    }
                   }
                 }
 
@@ -496,6 +521,155 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
       console.warn('Failed to pause run', e);
     }
   }, [activeChatId, chats]);
+
+  // Edit a prior human message and fork from that point in the SAME thread
+  const editAndForkMessage = useCallback(async (messageIndex: number, newContent: string) => {
+    if (!activeChatId) return;
+    const targetChatId = activeChatId;
+    const client = clientRef.current;
+
+    let currentChat = chats.find(c => c.id === targetChatId);
+    if (!currentChat) return;
+
+    // Ensure assistant/thread exist
+    if (!currentChat.assistant || !currentChat.thread) {
+      const assistant = await client.assistants.create({ graphId, config: config || { configurable: {} }, ifExists: 'raise' });
+      const thread = await client.threads.create();
+      setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, assistant, thread, metadata: { thread_id: thread.thread_id } } : chat));
+      currentChat = { ...(currentChat as ChatSession), assistant, thread } as ChatSession;
+    }
+
+    if (!currentChat.assistant || !currentChat.thread) return;
+
+    // Build base history up to BEFORE the edited message; drop tool messages
+    const baseMessages: Message[] = currentChat.messages.slice(0, messageIndex).filter((m) => m.type !== 'tool');
+    const editedMessage: Message = { type: 'human', content: newContent };
+
+    // Abort any active stream loop
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    // Update UI immediately to reflect the forked history + edited msg
+    setChats(prev => prev.map(chat => chat.id === targetChatId ? {
+      ...chat,
+      messages: [...baseMessages, editedMessage],
+      isLoading: true,
+      error: null,
+      toolCallMessageIndex: null,
+      streamingMessageIndex: null,
+      toolsCompleted: false,
+      seenToolResults: new Set<string>(),
+      pendingToolCallIds: new Set<string>(),
+      currentRunId: null,
+      pausedCheckpoint: null,
+    } : chat));
+
+    // Emit metadata baseline
+    const metadata: ThreadMetadata = { thread_id: currentChat.thread.thread_id, run_id: undefined };
+    onMetadataEvent?.(targetChatId, metadata);
+
+    // Start stream: reset messages to base via command.update, then append edited via input
+    abortControllerRef.current = new AbortController();
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const extra: any = { command: { update: { values: { messages: baseMessages } } } };
+      const stream = client.runs.stream(
+        currentChat.thread.thread_id,
+        currentChat.assistant.assistant_id,
+        {
+          input: { messages: [editedMessage] },
+          streamMode: ['messages', 'updates'],
+          config,
+          ...extra,
+        }
+      );
+
+      for await (const part of stream) {
+        if (abortControllerRef.current?.signal.aborted) break;
+
+        if (part.event === 'metadata' && part.data) {
+          const updatedMetadata = { ...metadata, run_id: part.data.run_id };
+          onMetadataEvent?.(targetChatId, updatedMetadata);
+          setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, currentRunId: part.data.run_id } : chat));
+        }
+
+        if ((part.event === 'messages' || part.event === 'messages/partial' || part.event === 'messages/complete') && Array.isArray(part.data)) {
+          for (const streamMessage of part.data) {
+            if (streamMessage.type === 'ai' || streamMessage.type === 'tool') {
+              setChats(prev => prev.map(chat => {
+                if (chat.id !== targetChatId) return chat;
+                const updatedMessages = [...chat.messages];
+                const incomingId = (streamMessage as any).id as string | undefined;
+                if (incomingId) {
+                  const existingByIdIndex = updatedMessages.findIndex((m: any) => (m as any).id === incomingId);
+                  if (existingByIdIndex >= 0) {
+                    updatedMessages[existingByIdIndex] = streamMessage;
+                    return { ...chat, messages: updatedMessages };
+                  }
+                }
+                if (streamMessage.type === 'ai') {
+                  if ((streamMessage as any).tool_calls && (streamMessage as any).tool_calls.length > 0) {
+                    const nextPending = new Set(chat.pendingToolCallIds);
+                    for (const tc of (streamMessage as any).tool_calls) { if (tc?.id) nextPending.add(tc.id); }
+                    if (chat.toolCallMessageIndex === null) {
+                      updatedMessages.push(streamMessage);
+                      chat.toolCallMessageIndex = updatedMessages.length - 1;
+                    } else {
+                      updatedMessages[chat.toolCallMessageIndex] = streamMessage;
+                    }
+                    return { ...chat, messages: updatedMessages, pendingToolCallIds: nextPending };
+                  } else {
+                    if (chat.toolCallMessageIndex !== null && !chat.toolsCompleted) return chat;
+                    if (chat.streamingMessageIndex !== null) {
+                      updatedMessages[chat.streamingMessageIndex] = streamMessage;
+                    } else {
+                      updatedMessages.push(streamMessage);
+                      chat.streamingMessageIndex = updatedMessages.length - 1;
+                    }
+                  }
+                } else if (streamMessage.type === 'tool') {
+                  const existingToolIndex = updatedMessages.findIndex(m => m.type === 'tool' && m.tool_call_id === (streamMessage as any).tool_call_id && (m as any).name === (streamMessage as any).name);
+                  if (existingToolIndex >= 0) {
+                    updatedMessages[existingToolIndex] = streamMessage;
+                  } else {
+                    let insertIndex = updatedMessages.length;
+                    for (let i = updatedMessages.length - 1; i >= 0; i--) {
+                      const ai = updatedMessages[i] as any;
+                      if (updatedMessages[i].type === 'ai' && !ai.tool_calls) {
+                        insertIndex = i;
+                      } else if (updatedMessages[i].type === 'ai' && ai.tool_calls) {
+                        break;
+                      }
+                    }
+                    updatedMessages.splice(insertIndex, 0, streamMessage);
+                    if (chat.streamingMessageIndex !== null && chat.streamingMessageIndex >= insertIndex) {
+                      chat.streamingMessageIndex += 1;
+                    }
+                  }
+                  chat.toolsCompleted = true;
+                  if ((streamMessage as any).tool_call_id && chat.pendingToolCallIds.has((streamMessage as any).tool_call_id)) {
+                    const nextPending = new Set(chat.pendingToolCallIds);
+                    nextPending.delete((streamMessage as any).tool_call_id);
+                    return { ...chat, messages: updatedMessages, pendingToolCallIds: nextPending };
+                  }
+                }
+                return { ...chat, messages: updatedMessages };
+              }));
+            }
+          }
+        }
+      }
+    } catch (e) {
+      const error = e instanceof Error ? e : new Error('Edit-and-fork failed');
+      setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, error } : chat));
+      onError?.(targetChatId, error as Error);
+    } finally {
+      setChats(prev => prev.map(chat => chat.id === targetChatId ? { ...chat, isLoading: false, currentRunId: null } : chat));
+      abortControllerRef.current = null;
+    }
+  }, [activeChatId, chats, graphId, config, onMetadataEvent, onError]);
   
   return {
     chats,
@@ -507,6 +681,7 @@ export function useMultiChat(options: UseMultiChatOptions): UseMultiChatReturn {
     sendMessage,
     stopCurrentStream,
     pauseCurrentRun,
+    editAndForkMessage,
     isLoading: activeChat?.isLoading || false
   };
 }
