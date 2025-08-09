@@ -9,9 +9,7 @@ interface UseGraphStreamOptions {
   apiUrl: string;
   graphId: string;
   config?: Config;
-  onUpdateEvent?: (event: any) => void;
   onMetadataEvent?: (event: ThreadMetadata) => void;
-  onCustomEvent?: (event: any) => void;
   onError?: (error: Error) => void;
 }
 
@@ -28,18 +26,163 @@ export function useGraphStream(options: UseGraphStreamOptions): UseGraphStreamRe
     apiUrl,
     graphId,
     config,
-    onUpdateEvent,
     onMetadataEvent,
-    onCustomEvent,
     onError
   } = options;
 
   const [messages, setMessages] = useState<Message[]>([]);
+  const seenToolResults = useRef<Set<string>>(new Set());
+  const currentConversationState = useRef<{
+    toolCallMessage: Message | null;
+    toolCallMessageIndex: number | null;
+    streamingMessageIndex: number | null;
+    toolsCompleted: boolean;
+  }>({
+    toolCallMessage: null,
+    toolCallMessageIndex: null,
+    streamingMessageIndex: null,
+    toolsCompleted: false
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   
   const abortControllerRef = useRef<AbortController | null>(null);
   const clientRef = useRef(makeClient({ apiUrl }));
+
+  // Helper function to handle AI messages with tool calls
+  const handleToolCallMessage = (message: Message) => {
+    const toolCallsLength = message.tool_calls?.length ?? 0;
+    const hasToolCalls = toolCallsLength > 0;
+
+    console.log('handleToolCallMessage:', {
+      hasToolCalls,
+      toolCallsLength,
+      toolCallsArgs: message.tool_calls?.map((tc: any) => tc.args)
+    });
+
+    // If there are tool calls (even if args are empty/partial), we should
+    // record this immediately to prevent premature streaming bubbles.
+    if (!hasToolCalls) return;
+
+    setMessages(prev => {
+      const newMessages = [...prev];
+      const state = currentConversationState.current;
+
+      if (state.toolCallMessageIndex === null) {
+        // First time - add the tool call message
+        state.toolCallMessage = message;
+        state.toolCallMessageIndex = newMessages.length;
+        newMessages.push(message);
+        console.log('Added tool call message at index:', state.toolCallMessageIndex);
+      } else {
+        // Update existing tool call message
+        newMessages[state.toolCallMessageIndex] = message;
+        state.toolCallMessage = message;
+        console.log('Updated tool call message at index:', state.toolCallMessageIndex);
+      }
+
+      return newMessages;
+    });
+  };
+
+  // Helper function to handle tool results
+  const handleToolResult = (message: Message) => {
+    const toolId = `${message.tool_call_id}_${message.name}`;
+    
+    console.log('handleToolResult:', { toolId, toolCallId: message.tool_call_id, name: message.name });
+    
+    // Avoid duplicates
+    if (seenToolResults.current.has(toolId)) {
+      console.log('Skipping duplicate tool result:', toolId);
+      return;
+    }
+    seenToolResults.current.add(toolId);
+    
+    setMessages(prev => {
+      const newMessages = [...prev];
+      const state = currentConversationState.current;
+      
+      // Insert after tool call message, in chronological order
+      let insertIndex = newMessages.length;
+      if (state.toolCallMessageIndex !== null) {
+        // Find position after tool call message but before any streaming response
+        insertIndex = state.toolCallMessageIndex + 1;
+        
+        // Count existing tool results to maintain order
+        while (insertIndex < newMessages.length && newMessages[insertIndex].type === 'tool') {
+          insertIndex++;
+        }
+      }
+      
+      console.log('Inserting tool result at index:', insertIndex);
+      
+      // Insert tool result
+      newMessages.splice(insertIndex, 0, message);
+      
+      // Update streaming index if it exists and got shifted
+      if (state.streamingMessageIndex !== null && state.streamingMessageIndex >= insertIndex) {
+        state.streamingMessageIndex++;
+      }
+      
+      return newMessages;
+    });
+    
+    // Mark tools as completed after we've seen tool results
+    console.log('Marking tools as completed');
+    currentConversationState.current.toolsCompleted = true;
+  };
+
+  // Helper function to handle streaming AI responses
+  const handleStreamingResponse = (message: Message, eventType: string) => {
+    const hasContent = message.content && message.content.trim().length > 0;
+    if (!hasContent) return;
+    
+    const state = currentConversationState.current;
+    const hasToolCalls = state.toolCallMessage !== null;
+    
+    console.log('handleStreamingResponse:', {
+      eventType,
+      hasToolCalls,
+      toolsCompleted: state.toolsCompleted,
+      content: message.content.slice(0, 50)
+    });
+    
+    // STRICT RULE: If tools were called, only show streaming response after ALL tools complete
+    if (hasToolCalls && !state.toolsCompleted) {
+      console.log('Blocking streaming response - tools not completed yet');
+      return;
+    }
+    
+    console.log('Allowing streaming response');
+    
+    setMessages(prev => {
+      const newMessages = [...prev];
+      
+      if (state.streamingMessageIndex !== null) {
+        // Update existing streaming message
+        newMessages[state.streamingMessageIndex] = message;
+      } else {
+        // Create new streaming message at the end
+        newMessages.push(message);
+        state.streamingMessageIndex = newMessages.length - 1;
+      }
+      
+      return newMessages;
+    });
+  };
+
+  // Main message handler
+  const handleMessage = (message: Message, eventType: string) => {
+    if (message.type === 'ai') {
+      if (message.tool_calls && message.tool_calls.length > 0) {
+        handleToolCallMessage(message);
+      } else {
+        handleStreamingResponse(message, eventType);
+      }
+    } else if (message.type === 'tool') {
+      handleToolResult(message);
+    }
+  };
 
   const stop = useCallback(() => {
     if (abortControllerRef.current) {
@@ -59,6 +202,15 @@ export function useGraphStream(options: UseGraphStreamOptions): UseGraphStreamRe
     setError(null);
     setIsLoading(true);
     abortControllerRef.current = new AbortController();
+    
+    // Reset conversation state for new conversation
+    seenToolResults.current.clear();
+    currentConversationState.current = {
+      toolCallMessage: null,
+      toolCallMessageIndex: null,
+      streamingMessageIndex: null,
+      toolsCompleted: false
+    };
 
     // Add user message to UI immediately
     const userMessages = input.messages.filter(msg => msg.type === 'human');
@@ -98,15 +250,6 @@ export function useGraphStream(options: UseGraphStreamOptions): UseGraphStreamRe
       );
 
       let runId: string | undefined;
-      let currentStreamingMessageIndex: number | null = null;
-
-      // Add a placeholder AI message immediately to reserve the position
-      setMessages(prev => {
-        const newMessages = [...prev];
-        currentStreamingMessageIndex = newMessages.length;
-        newMessages.push({ type: 'ai', content: '' });
-        return newMessages;
-      });
 
       for await (const part of stream) {
         // Check if aborted
@@ -123,56 +266,33 @@ export function useGraphStream(options: UseGraphStreamOptions): UseGraphStreamRe
           onMetadataEvent?.(updatedMetadata);
         }
 
-        if (part.event === 'messages' && Array.isArray(part.data)) {
-          console.log('Messages event data:', part.data);
-          // Handle direct message updates
-          const aiMessages = part.data.filter((msg: Message) => msg.type === 'ai');
-          if (aiMessages.length > 0 && currentStreamingMessageIndex !== null) {
-            const messageIndex = currentStreamingMessageIndex; // Capture the value
-            setMessages(prev => {
-              const newMessages = [...prev];
-              const latestAiMessage = aiMessages[aiMessages.length - 1];
-              
-              // Update the pre-allocated message position
-              if (messageIndex < newMessages.length) {
-                newMessages[messageIndex] = latestAiMessage;
-              }
-              return newMessages;
-            });
+        // Handle streaming events with clean, robust logic
+        if ((part.event === 'messages' || part.event === 'messages/partial' || part.event === 'messages/complete') && Array.isArray(part.data)) {
+          console.log(`${part.event} event:`, part.data);
+          
+          for (const message of part.data) {
+            handleMessage(message, part.event);
           }
         }
 
         if (part.event === 'updates' && part.data) {
-          onUpdateEvent?.(part.data);
-          
-          // Extract messages from updates
-          for (const [, update] of Object.entries(part.data)) {
-            if (update && typeof update === 'object' && 'messages' in update) {
-              const nodeMessages = (update as any).messages;
-              if (Array.isArray(nodeMessages)) {
-                const aiMessages = nodeMessages.filter((msg: Message) => msg.type === 'ai');
-                if (aiMessages.length > 0 && currentStreamingMessageIndex !== null) {
-                  const messageIndex = currentStreamingMessageIndex; // Capture the value
-                  setMessages(prev => {
-                    const newMessages = [...prev];
-                    const latestAiMessage = aiMessages[aiMessages.length - 1];
-                    
-                    // Update the pre-allocated message position
-                    if (messageIndex < newMessages.length) {
-                      newMessages[messageIndex] = latestAiMessage;
-                    }
-                    return newMessages;
-                  });
-                }
-              }
-            }
-          }
+          // Updates events are now handled by messages events above
+          console.log('Updates event:', part.data);
         }
 
         if (part.event === 'events' && part.data) {
-          onCustomEvent?.(part.data);
+          // Process custom events if needed
+          console.log('Custom event:', part.data);
         }
       }
+
+      // Reset conversation state after completion
+      currentConversationState.current = {
+        toolCallMessage: null,
+        toolCallMessageIndex: null,
+        streamingMessageIndex: null,
+        toolsCompleted: false
+      };
 
       // Cleanup: delete assistant and thread
       try {
@@ -190,7 +310,7 @@ export function useGraphStream(options: UseGraphStreamOptions): UseGraphStreamRe
       setIsLoading(false);
       abortControllerRef.current = null;
     }
-  }, [apiUrl, graphId, config, isLoading, onUpdateEvent, onMetadataEvent, onCustomEvent, onError, stop]);
+  }, [apiUrl, graphId, config, isLoading, onMetadataEvent, onError, stop]);
 
   return {
     messages,

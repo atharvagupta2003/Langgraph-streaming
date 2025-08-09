@@ -1,22 +1,29 @@
 'use client';
 
-import { ToolEvent } from "@/lib/types";
-import clsx from "clsx";
 import { useState } from "react";
+import clsx from "clsx";
 
-interface ToolCallCardProps extends ToolEvent {}
+interface ToolCallCardProps {
+  kind: "call" | "result";
+  name?: string;
+  args?: any;
+  result?: any;
+  toolCallId?: string;
+  when?: number;
+}
 
 export default function ToolCallCard({ 
   kind, 
   name, 
-  node, 
   args, 
   result, 
+  toolCallId,
   when 
 }: ToolCallCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const formatTimestamp = (timestamp: number) => {
+  const formatTimestamp = (timestamp?: number) => {
+    if (!timestamp) return '';
     return new Date(timestamp).toLocaleTimeString();
   };
 
@@ -40,16 +47,18 @@ export default function ToolCallCard({
             <span className="font-medium text-gray-900">
               {name || (kind === "call" ? "Tool Call" : "Tool Result")}
             </span>
-            {node && (
+            {toolCallId && (
               <span className="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full">
-                {node}
+                {toolCallId.slice(-6)}
               </span>
             )}
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">
-              {formatTimestamp(when)}
-            </span>
+            {when && (
+              <span className="text-xs text-gray-500">
+                {formatTimestamp(when)}
+              </span>
+            )}
             <button
               onClick={() => setIsExpanded(!isExpanded)}
               className="text-xs text-gray-500 hover:text-gray-700"

@@ -1,9 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef, KeyboardEvent } from "react";
-import { Message, ToolEvent, ThreadMetadata } from "@/lib/types";
+import { Message, ThreadMetadata } from "@/lib/types";
 import MessageBubble from "./MessageBubble";
-import ToolActivity from "./ToolActivity";
 import { useGraphStream } from "@/hooks/useGraphStream";
 import type { Config } from '@langchain/langgraph-sdk';
 
@@ -15,61 +14,18 @@ interface ChatProps {
 
 export default function Chat({ apiUrl, graphId, config }: ChatProps) {
   const [input, setInput] = useState("");
-  const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
   const [metadata, setMetadata] = useState<ThreadMetadata>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const handleUpdateEvent = (evt: any) => {
-    if (typeof evt === 'object' && evt) {
-      for (const [nodeName, update] of Object.entries(evt)) {
-        if (update && typeof update === 'object' && 'messages' in update) {
-          const messages = (update as any).messages;
-          if (Array.isArray(messages)) {
-            for (const msg of messages) {
-              if (msg.type === 'ai' && Array.isArray(msg.tool_calls)) {
-                for (const toolCall of msg.tool_calls) {
-                  setToolEvents(prev => [...prev, {
-                    id: `${Date.now()}-${toolCall.id}`,
-                    kind: "call",
-                    name: toolCall.name,
-                    node: nodeName,
-                    args: toolCall.args,
-                    when: Date.now()
-                  }]);
-                }
-              }
-              if (msg.type === 'tool') {
-                setToolEvents(prev => [...prev, {
-                  id: `${Date.now()}-${msg.name || 'tool'}`,
-                  kind: "result",
-                  name: msg.name,
-                  node: nodeName,
-                  result: msg.content,
-                  when: Date.now()
-                }]);
-              }
-            }
-          }
-        }
-      }
-    }
-  };
-
   const handleMetaEvent = (evt: any) => {
     setMetadata(evt);
-  };
-
-  const handleCustomEvent = (evt: any) => {
-    console.log('Custom event:', evt);
   };
 
   const thread = useGraphStream({
     apiUrl,
     graphId,
     config,
-    onUpdateEvent: handleUpdateEvent,
     onMetadataEvent: handleMetaEvent,
-    onCustomEvent: handleCustomEvent,
     onError: (e) => console.error('Stream error:', e),
   });
 
@@ -142,9 +98,7 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex min-h-0">
-        {/* Messages panel */}
-        <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-h-0">
           <div className="flex-1 overflow-y-auto px-6 py-4">
             {messages.length === 0 ? (
               <div className="text-center text-gray-500 mt-8">
@@ -156,8 +110,7 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
                 {messages.map((message, index) => (
                   <MessageBubble
                     key={index}
-                    role={message.type === 'human' ? 'human' : 'ai'}
-                    content={message.content}
+                    message={message}
                     streaming={thread.isLoading && message.type === 'ai' && index === messages.length - 1}
                   />
                 ))}
@@ -187,14 +140,6 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
               </button>
             </div>
           </div>
-        </div>
-
-        {/* Tool Activity panel */}
-        <div className="w-1/3 border-l border-gray-200 bg-gray-50">
-          <div className="h-full overflow-y-auto px-6 py-4">
-            <ToolActivity events={toolEvents} />
-          </div>
-        </div>
       </div>
     </div>
   );
