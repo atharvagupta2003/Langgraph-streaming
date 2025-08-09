@@ -57,9 +57,7 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
     }
   };
 
-  const handleStop = () => {
-    multiChat.stopCurrentStream();
-  };
+  // Removed top-bar stop button
   const handlePause = async () => {
     await multiChat.pauseCurrentRun();
   };
@@ -196,14 +194,6 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
                     <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
                     Thinking
                   </span>
-                )}
-                {multiChat.isLoading && (
-                  <button
-                    onClick={handleStop}
-                    className="px-3 sm:px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
-                  >
-                    Stop
-                  </button>
                 )}
               </div>
             </div>
