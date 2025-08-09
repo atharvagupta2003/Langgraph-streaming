@@ -1,0 +1,8 @@
+.env
+.ipynb_checkpoints
+.langgraph-data
+/UI/node_modules
+/UI/.next
+/langgraph-example/.langgraph_api
+/langgraph-example/.venv
+/langgraph-example/.env
