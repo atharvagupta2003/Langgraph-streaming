@@ -4,6 +4,7 @@ export interface Message {
   tool_calls?: ToolCall[];
   name?: string;
   tool_call_id?: string;
+  id?: string;
 }
 
 export interface ToolCall {
