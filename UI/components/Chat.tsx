@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, KeyboardEvent } from "react";
+import { useState, useEffect, useRef, useMemo, KeyboardEvent } from "react";
 import clsx from "clsx";
 import { Message, ThreadMetadata } from "@/lib/types";
 import MessageBubble from "./MessageBubble";
@@ -23,15 +23,45 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const lastScrollTopRef = useRef(0);
   const chatScrollElRef = useRef<HTMLDivElement | null>(null);
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const [integrationsOpen, setIntegrationsOpen] = useState(false);
+  const integrationsRef = useRef<HTMLDivElement | null>(null);
+  const [thinkingMode, setThinkingMode] = useState<boolean>(false);
 
   const handleMetaEvent = (chatId: string, evt: ThreadMetadata) => {
     setMetadata(evt);
   };
 
+  // Persisted thinking mode
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('lg_thinking_mode');
+      if (saved != null) setThinkingMode(saved === 'true');
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('lg_thinking_mode', String(thinkingMode)); } catch {}
+  }, [thinkingMode]);
+
+  const effectiveConfig = useMemo<Config | undefined>(() => {
+    if (!config) {
+      return { configurable: { thinking_mode: thinkingMode } } as Config;
+    }
+    return {
+      ...config,
+      configurable: {
+        ...(config.configurable || {}),
+        thinking_mode: thinkingMode,
+      },
+    } as Config;
+  }, [config, thinkingMode]);
+
   const multiChat = useMultiChat({
     apiUrl,
     graphId,
-    config,
+    config: effectiveConfig,
     onMetadataEvent: handleMetaEvent,
     onError: (chatId, e) => console.error('Stream error for chat', chatId, ':', e),
   });
@@ -108,6 +138,86 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll as any);
+  }, []);
+
+  // Theme init from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('lg_theme');
+      const initial: 'dark' | 'light' = saved === 'light' ? 'light' : 'dark';
+      setTheme(initial);
+      if (typeof document !== 'undefined') {
+        document.body.classList.toggle('theme-light', initial === 'light');
+      }
+    } catch {}
+  }, []);
+
+  // Close integrations popover on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (!integrationsOpen) return;
+      const target = e.target as Node;
+      if (integrationsRef.current && !integrationsRef.current.contains(target)) {
+        setIntegrationsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [integrationsOpen]);
+
+  const toggleTheme = () => {
+    const next: 'dark' | 'light' = theme === 'light' ? 'dark' : 'light';
+    setTheme(next);
+    try { localStorage.setItem('lg_theme', next); } catch {}
+    if (typeof document !== 'undefined') {
+      document.body.classList.toggle('theme-light', next === 'light');
+    }
+  };
+
+  // Voice input (Web Speech API if available)
+  const ensureRecognition = () => {
+    if (typeof window === 'undefined') return null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) return null;
+    if (!recognitionRef.current) {
+      const rec = new SR();
+      rec.lang = 'en-US';
+      rec.interimResults = true;
+      rec.continuous = true;
+      rec.onresult = (e: any) => {
+        let text = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          text += e.results[i][0].transcript;
+        }
+        setInput(prev => (prev ? prev + ' ' : '') + text.trim());
+      };
+      rec.onend = () => {
+        setIsListening(false);
+      };
+      rec.onerror = () => {
+        setIsListening(false);
+      };
+      recognitionRef.current = rec;
+    }
+    return recognitionRef.current;
+  };
+
+  const toggleListening = () => {
+    const rec = ensureRecognition();
+    if (!rec) return;
+    if (isListening) {
+      try { rec.stop(); } catch {}
+      setIsListening(false);
+    } else {
+      try { rec.start(); setIsListening(true); } catch {}
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      try { recognitionRef.current?.stop?.(); } catch {}
+    };
   }, []);
 
   const messages = multiChat.activeChat?.messages || [];
@@ -195,6 +305,26 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
                     Thinking
                   </span>
                 )}
+                <button
+                  onClick={() => setThinkingMode(v => !v)}
+                  className={clsx(
+                    'px-2 py-1 rounded-full border text-xs font-medium transition-colors',
+                    thinkingMode
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-gray-200 text-gray-800 border-gray-300 hover:bg-gray-100'
+                  )}
+                  title={thinkingMode ? 'Disable self improve' : 'Enable self improve'}
+                  aria-pressed={thinkingMode}
+                >
+                  {thinkingMode ? 'Self improve: On' : 'Self improve: Off'}
+                </button>
+                <button
+                  onClick={toggleTheme}
+                  className="px-2 py-1 rounded-full border border-white/40 bg-white/30 hover:bg-white/50 text-gray-800 text-xs"
+                  title={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+                >
+                  {theme === 'light' ? '☀️' : '🌙'}
+                </button>
               </div>
             </div>
             {/* Quick suggestions */}
@@ -264,43 +394,125 @@ export default function Chat({ apiUrl, graphId, config }: ChatProps) {
         <div className="flex-shrink-0 px-3 sm:px-6 pb-4">
           <div className="w-full mx-auto max-w-[96vw] lg:max-w-[97vw] xl:max-w-[98vw] 2xl:max-w-[1600px] sticky bottom-4">
             <div className="glass rounded-2xl p-2 border-white/30 shadow-lg">
-              <div className="flex gap-2 items-end">
+              <div className="flex gap-2 items-center">
+                {/* Integrations trigger */}
+                <div className="relative" ref={integrationsRef}>
+                  <button
+                    onClick={() => setIntegrationsOpen(v => !v)}
+                    aria-haspopup="menu"
+                    aria-expanded={integrationsOpen}
+                    title="Integrations"
+                    className="p-2 rounded-full border bg-white/70 text-gray-800 border-white/60 hover:bg-white transition-colors"
+                  >
+                    {/* Puzzle icon */}
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 8a2 2 0 11-4 0 2 2 0 014 0z" />
+                      <path d="M3 10h4v4H3zM17 10h4v4h-4zM10 17v4h4v-4zM10 3v4h4V3z" />
+                    </svg>
+                  </button>
+                  {integrationsOpen && (
+                    <div
+                      role="menu"
+                      className={clsx(
+                        'absolute left-0 bottom-12 z-40 w-56 rounded-xl overflow-hidden backdrop-blur-xl shadow-xl border',
+                        theme === 'light'
+                          ? 'bg-white/90 border-gray-200 text-gray-900'
+                          : 'bg-white/10 border-white/20 text-white'
+                      )}
+                    >
+                      <button
+                        role="menuitem"
+                        className={clsx(
+                          'w-full text-left px-3 py-2 text-sm transition-colors',
+                          theme === 'light' ? 'hover:bg-gray-50' : 'hover:bg-white/20'
+                        )}
+                        onClick={() => setIntegrationsOpen(false)}
+                      >
+                        Connect integrations
+                      </button>
+                      <button
+                        role="menuitem"
+                        className={clsx(
+                          'w-full text-left px-3 py-2 text-sm transition-colors',
+                          theme === 'light' ? 'hover:bg-gray-50' : 'hover:bg-white/20'
+                        )}
+                        onClick={() => setIntegrationsOpen(false)}
+                      >
+                        Connect knowledge base
+                      </button>
+                      <button
+                        role="menuitem"
+                        className={clsx(
+                          'w-full text-left px-3 py-2 text-sm transition-colors',
+                          theme === 'light' ? 'hover:bg-gray-50' : 'hover:bg-white/20'
+                        )}
+                        onClick={() => setIntegrationsOpen(false)}
+                      >
+                        Connect triggers
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 <textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Type your message... (Enter to send, Shift+Enter for new line)"
-                  className="flex-1 p-3 bg-white/80 border border-white/70 text-gray-900 placeholder-gray-500 rounded-xl resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  rows={2}
+                  className="flex-1 h-11 min-h-[44px] px-4 py-2 bg-white/80 border border-white/70 text-gray-900 placeholder-gray-500 rounded-full resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 no-scrollbar"
+                  rows={1}
                   disabled={multiChat.isLoading}
                 />
-                {multiChat.isLoading ? (
+                <div className="flex items-center gap-2">
+                  {/* Voice button */}
                   <button
-                    onClick={handlePause}
-                    aria-label="Pause run"
-                    className="p-3 rounded-xl transition-colors flex items-center justify-center bg-blue-600 text-white hover:bg-red-600 disabled:bg-gray-400"
-                    title="Pause and save state"
-                    disabled={Boolean(multiChat.activeChat?.toolCallMessageIndex !== null && !multiChat.activeChat?.toolsCompleted)}
-                  >
-                    <span className="inline-block w-5 h-5 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleSubmit}
-                    disabled={!input.trim()}
-                    aria-label="Send message"
+                    onClick={toggleListening}
+                    aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
+                    title={isListening ? 'Stop voice input' : 'Start voice input'}
                     className={clsx(
-                      'p-3 rounded-xl transition-colors flex items-center justify-center',
-                      'text-white',
-                      'bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed'
+                      'p-2 rounded-full border transition-colors',
+                      isListening
+                        ? 'bg-red-600 text-white border-red-600'
+                        : 'bg-white/70 text-gray-800 border-white/60 hover:bg-white'
                     )}
+                    disabled={multiChat.isLoading}
                   >
                     <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M22 2L11 13" />
-                      <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+                      <path d="M12 1a3 3 0 00-3 3v6a3 3 0 006 0V4a3 3 0 00-3-3z" />
+                      <path d="M19 10a7 7 0 01-14 0" />
+                      <path d="M12 19v4" />
+                      <path d="M8 23h8" />
                     </svg>
                   </button>
-                )}
+                  {/* Send / Pause */}
+                  {multiChat.isLoading ? (
+                    <button
+                      onClick={handlePause}
+                      aria-label="Pause run"
+                      className="p-3 rounded-full transition-colors flex items-center justify-center bg-blue-600 text-white hover:bg-red-600 disabled:bg-gray-400"
+                      title="Pause and save state"
+                      disabled={Boolean(multiChat.activeChat?.toolCallMessageIndex !== null && !multiChat.activeChat?.toolsCompleted)}
+                    >
+                      <span className="inline-block w-5 h-5 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleSubmit}
+                      disabled={!input.trim()}
+                      aria-label="Send message"
+                      className={clsx(
+                        'p-3 rounded-full transition-colors flex items-center justify-center',
+                        'text-white',
+                        'bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed'
+                      )}
+                    >
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 2L11 13" />
+                        <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>

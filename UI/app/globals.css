@@ -40,3 +40,67 @@
   66% { transform: translate(-10%, 10%) scale(0.9); }
   100% { transform: translate(0, 0) scale(1); }
 }
+
+/* Theme variables and particles based on Theme mock (non-intrusive) */
+:root {
+  --primary: #00d4ff;
+  --primary-dark: #0099cc;
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb: rgba(0, 212, 255, 0.3);
+  --scrollbar-track: rgba(255, 255, 255, 0.05);
+}
+
+.theme-light {
+  --primary: #0099cc;
+  --primary-dark: #0077aa;
+  --glass-border: rgba(0, 153, 204, 0.2);
+  --scrollbar-thumb: rgba(0, 153, 204, 0.3);
+  --scrollbar-track: rgba(0, 0, 0, 0.05);
+}
+
+.theme-gradient {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 25%, #0a0e27 50%, #092045 100%);
+}
+
+.theme-light .theme-gradient {
+  background: linear-gradient(135deg, #a8edea 0%, #fed6e3 25%, #d3e9ff 50%, #b3d9ff 100%);
+}
+
+.particles {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -10;
+}
+
+.particle {
+  position: absolute;
+  top: 100vh;
+  width: 4px;
+  height: 4px;
+  background: var(--primary);
+  border-radius: 9999px;
+  opacity: 0.3;
+  animation: floatUp linear infinite;
+  box-shadow: 0 0 10px var(--primary);
+}
+
+@keyframes floatUp {
+  0% { transform: translateY(0) translateX(0); }
+  100% { transform: translateY(-200vh) translateX(100px); }
+}
+
+/* Global scrollbar styling (keeps native behavior) */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+
+/* Light theme adjustments for glass surfaces */
+.theme-light .glass {
+  background-color: rgba(255, 255, 255, 0.7);
+  border-color: rgba(0, 153, 204, 0.2);
+}
